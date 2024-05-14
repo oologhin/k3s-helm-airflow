@@ -7,41 +7,53 @@
   - ca-certificates
   - gnupg
   - lsb-release
+  register: dependencies_result
 
-- name: Install K3s
-  shell: |
-    curl -sfL https://get.k3s.io | sh -
-
-- name: Install Helm
-  shell: |
-    curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
-  args:
-    creates: /usr/local/bin/helm
+- name: Print dependencies installation result
+  debug:
+    var: dependencies_result
 
 - name: Add Helm repo for K3s
   command: helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
-  args:
-    creates: /etc/helm/repositories/rancher-stable
+  environment:
+    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+  register: helm_repo_add_result
+
+- name: Print Helm repo add result
+  debug:
+    var: helm_repo_add_result
 
 - name: Update Helm repositories
   command: helm repo update
+  environment:
+    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+  register: helm_repo_update_result
+
+- name: Print Helm repo update result
+  debug:
+    var: helm_repo_update_result
 
 - name: Install K3s using Helm
-  kubernetes.core.helm:
-    name: k3s
-    chart_ref: rancher-stable/rancher
-    namespace: kube-system
-    create_namespace: true
-    values:
-      hostname: k3s.local
-      replicas: 1
+  shell: helm install k3s rancher-stable/rancher --namespace kube-system --create-namespace --set hostname=k3s.local,replicas=1
+  environment:
+    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+  register: k3s_helm_install_result
+  changed_when: k3s_helm_install_result is changed
+
+- name: Print K3s Helm installation result
+  debug:
+    var: k3s_helm_install_result
 
 - name: Wait for K3s to be ready
   command: kubectl get nodes
-  register: result
-  until: result.stdout.find('Ready') != -1
+  register: k3s_ready_result
+  until: k3s_ready_result.stdout.find('Ready') != -1
   retries: 20
   delay: 15
+
+- name: Print K3s readiness result
+  debug:
+    var: k3s_ready_result
 
 - name: Create namespace for kubernetes-dashboard
   kubernetes.core.k8s:
@@ -51,30 +63,36 @@
       kind: Namespace
       metadata:
         name: kubernetes-dashboard
+  register: dashboard_namespace_result
+
+- name: Print Kubernetes Dashboard namespace creation result
+  debug:
+    var: dashboard_namespace_result
 
 - name: Deploy Kubernetes Dashboard using Helm
-  kubernetes.core.helm:
-    name: kubernetes-dashboard
-    chart_ref: kubernetes-dashboard
-    repo: https://kubernetes.github.io/dashboard/
-    namespace: kubernetes-dashboard
-    create_namespace: true
-    values:
-      serviceAccount:
-        create: true
-        name: admin-user
-      rbac:
-        clusterAdminRole: true
+  shell: helm install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard --namespace kubernetes-dashboard --create-namespace --set serviceAccount.create=true,serviceAccount.name=admin-user,rbac.clusterAdminRole=true
+  environment:
+    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+  register: dashboard_helm_install_result
+
+- name: Print Kubernetes Dashboard Helm installation result
+  debug:
+    var: dashboard_helm_install_result
 
 - name: Get admin user token for dashboard login
   command: kubectl -n kubernetes-dashboard create token admin-user
-  register: admin_token
+  register: admin_token_result
 
-- name: Display admin user token
+- name: Print admin user token result
   debug:
-    msg: "Kubernetes Dashboard admin token: {{ admin_token.stdout }}"
+    var: admin_token_result
 
 - name: Forward port for Kubernetes Dashboard
   command: kubectl port-forward -n kubernetes-dashboard service/kubernetes-dashboard 8443:443
   async: 3600
   poll: 0
+  register: port_forward_result
+
+- name: Print port forward result
+  debug:
+    var: port_forward_result
