@@ -1,0 +1,3 @@
+# Include the install tasks
+- include_tasks: install.yml
+  tags: install

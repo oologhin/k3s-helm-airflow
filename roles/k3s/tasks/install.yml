@@ -1,0 +1,80 @@
+- name: Install dependencies
+  package:
+    name: "{{ item }}"
+    state: present
+  loop:
+  - curl
+  - ca-certificates
+  - gnupg
+  - lsb-release
+
+- name: Install K3s
+  shell: |
+    curl -sfL https://get.k3s.io | sh -
+
+- name: Install Helm
+  shell: |
+    curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+
+- name: Add Helm repo for K3s
+  command: helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
+  args:
+    creates: /etc/helm/repositories/rancher-stable
+
+- name: Update Helm repositories
+  command: helm repo update
+
+- name: Install K3s using Helm
+  kubernetes.core.helm:
+    name: k3s
+    chart_ref: rancher-stable/rancher
+    namespace: kube-system
+    create_namespace: true
+    values:
+      hostname: k3s.local
+      replicas: 1
+
+- name: Wait for K3s to be ready
+  command: kubectl get nodes
+  register: result
+  until: result.stdout.find('Ready') != -1
+  retries: 20
+  delay: 15
+
+- name: Create namespace for kubernetes-dashboard
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: kubernetes-dashboard
+
+- name: Deploy Kubernetes Dashboard using Helm
+  kubernetes.core.helm:
+    name: kubernetes-dashboard
+    chart_ref: kubernetes-dashboard
+    repo: https://kubernetes.github.io/dashboard/
+    namespace: kubernetes-dashboard
+    create_namespace: true
+    values:
+      serviceAccount:
+        create: true
+        name: admin-user
+      rbac:
+        clusterAdminRole: true
+
+- name: Get admin user token for dashboard login
+  command: kubectl -n kubernetes-dashboard create token admin-user
+  register: admin_token
+
+- name: Display admin user token
+  debug:
+    msg: "Kubernetes Dashboard admin token: {{ admin_token.stdout }}"
+
+- name: Forward port for Kubernetes Dashboard
+  command: kubectl port-forward -n kubernetes-dashboard service/kubernetes-dashboard 8443:443
+  async: 3600
+  poll: 0
