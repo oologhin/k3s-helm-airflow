@@ -1,3 +1,4 @@
+# Task to install dependencies
 - name: Install dependencies
   package:
     name: "{{ item }}"
@@ -13,39 +14,26 @@
   debug:
     var: dependencies_result
 
-- name: Add Helm repo for K3s
-  command: helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
-  environment:
-    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
-  register: helm_repo_add_result
+# Task to install K3s
+- name: Install K3s
+  shell: |
+    curl -sfL https://get.k3s.io | sh -
+  register: k3s_install_result
 
-- name: Print Helm repo add result
+- name: Print K3s installation result
   debug:
-    var: helm_repo_add_result
+    var: k3s_install_result
+# Ensure K3s service is running and enable it to start on boot
+- name: Ensure K3s service is running
+  systemd:
+    name: k3s
+    enabled: yes
+    state: started
 
-- name: Update Helm repositories
-  command: helm repo update
-  environment:
-    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
-  register: helm_repo_update_result
-
-- name: Print Helm repo update result
-  debug:
-    var: helm_repo_update_result
-
-- name: Install K3s using Helm
-  shell: helm install k3s rancher-stable/rancher --namespace kube-system --create-namespace --set hostname=k3s.local,replicas=1
-  environment:
-    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
-  register: k3s_helm_install_result
-  changed_when: k3s_helm_install_result is changed
-
-- name: Print K3s Helm installation result
-  debug:
-    var: k3s_helm_install_result
-
+# Wait for K3s to be ready
 - name: Wait for K3s to be ready
-  command: kubectl get nodes
+  shell: |
+    kubectl get nodes
   register: k3s_ready_result
   until: k3s_ready_result.stdout.find('Ready') != -1
   retries: 20
@@ -55,7 +43,46 @@
   debug:
     var: k3s_ready_result
 
-- name: Create namespace for kubernetes-dashboard
+# Task to install Helm
+- name: Download Helm
+  shell: |
+    curl -sSL https://get.helm.sh/helm-v3.7.1-linux-amd64.tar.gz -o /tmp/helm.tar.gz
+  register: helm_download_result
+
+- name: Extract Helm
+  shell: |
+    tar -zxvf /tmp/helm.tar.gz -C /tmp
+  register: helm_extract_result
+
+- name: Move Helm to /usr/local/bin
+  shell: |
+    mv /tmp/linux-amd64/helm /usr/local/bin/helm
+  register: helm_move_result
+
+# Task to add Helm repo for Kubernetes Dashboard
+- name: Add Helm repo for Kubernetes Dashboard
+  shell: helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/
+  environment:
+    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+  register: helm_repo_add_result
+
+- name: Print Helm repo add result
+  debug:
+    var: helm_repo_add_result
+
+# Task to update Helm repositories
+- name: Update Helm repositories
+  shell: helm repo update
+  environment:
+    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+  register: helm_repo_update_result
+
+- name: Print Helm repo update result
+  debug:
+    var: helm_repo_update_result
+
+# Task to create namespace for Kubernetes Dashboard
+- name: Create namespace for Kubernetes Dashboard
   kubernetes.core.k8s:
     state: present
     definition:
@@ -69,8 +96,9 @@
   debug:
     var: dashboard_namespace_result
 
+# Task to deploy Kubernetes Dashboard using Helm
 - name: Deploy Kubernetes Dashboard using Helm
-  shell: helm install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard --namespace kubernetes-dashboard --create-namespace --set serviceAccount.create=true,serviceAccount.name=admin-user,rbac.clusterAdminRole=true
+  shell: helm install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard --namespace kubernetes-dashboard --set serviceAccount.create=true,serviceAccount.name=admin-user,rbac.clusterAdminRole=true
   environment:
     PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
   register: dashboard_helm_install_result
@@ -79,6 +107,7 @@
   debug:
     var: dashboard_helm_install_result
 
+# Task to get admin user token for Kubernetes Dashboard login
 - name: Get admin user token for dashboard login
   command: kubectl -n kubernetes-dashboard create token admin-user
   register: admin_token_result
@@ -87,6 +116,7 @@
   debug:
     var: admin_token_result
 
+# Task to forward port for Kubernetes Dashboard
 - name: Forward port for Kubernetes Dashboard
   command: kubectl port-forward -n kubernetes-dashboard service/kubernetes-dashboard 8443:443
   async: 3600
