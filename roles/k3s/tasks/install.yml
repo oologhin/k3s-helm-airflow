@@ -23,6 +23,7 @@
 - name: Print K3s installation result
   debug:
     var: k3s_install_result
+
 # Ensure K3s service is running and enable it to start on boot
 - name: Ensure K3s service is running
   systemd:
@@ -30,14 +31,35 @@
     enabled: yes
     state: started
 
+# Task to check the status of the K3s service
+- name: Check K3s service status
+  command: systemctl status k3s
+  register: k3s_service_status
+  ignore_errors: yes
+
+- name: Print K3s service status
+  debug:
+    var: k3s_service_status
+
+# Ensure kubectl is configured correctly
+- name: Set KUBECONFIG environment variable
+  shell: |
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+  register: kubeconfig_result
+
+- name: Print KUBECONFIG environment setup result
+  debug:
+    var: kubeconfig_result
+
 # Wait for K3s to be ready
 - name: Wait for K3s to be ready
   shell: |
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
     kubectl get nodes
   register: k3s_ready_result
   until: k3s_ready_result.stdout.find('Ready') != -1
-  retries: 20
-  delay: 15
+  retries: 40
+  delay: 20
 
 - name: Print K3s readiness result
   debug:
